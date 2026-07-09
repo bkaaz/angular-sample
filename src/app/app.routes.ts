@@ -4,14 +4,14 @@ export const routes: Routes = [
   {
     path: 'debts',
     loadComponent: () =>
-      import('./features/debts/debts-list.component').then(
+      import('./features/debts/view/debts-list.component').then(
         (m) => m.DebtsListComponent
       ),
   },
   {
     path: 'debts/:id',
     loadComponent: () =>
-      import('./features/debts/debt-detail.component').then(
+      import('./features/debts/view/debt-detail.component').then(
         (m) => m.DebtDetailComponent
       ),
   },

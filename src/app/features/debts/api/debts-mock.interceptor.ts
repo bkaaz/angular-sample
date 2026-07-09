@@ -1,6 +1,6 @@
 import { HttpInterceptorFn, HttpResponse } from '@angular/common/http';
 import { of } from 'rxjs';
-import { Client, Debt, DebtDetail } from './debt.model';
+import { Debt, DebtDetail } from '../model/debt.model';
 
 const MOCK_DEBTS: Debt[] = [
   { id: '1', amount: 500, currency: 'PLN', dueDate: '2026-08-01', status: 'pending', description: 'Pożyczka na wakacje' },
@@ -9,17 +9,13 @@ const MOCK_DEBTS: Debt[] = [
   { id: '4', amount: 750, currency: 'PLN', dueDate: '2026-07-20', status: 'pending', description: 'Naprawa samochodu' },
 ];
 
+// `/api/debts` deliberately omits ownerId, mirroring the real API. Do not "fix" it here —
+// see TODO(api) in debts-api.service.ts.
 const MOCK_DEBT_DETAILS: DebtDetail[] = [
   { ...MOCK_DEBTS[0], ownerId: 'c1' },
   { ...MOCK_DEBTS[1], ownerId: 'c2' },
   { ...MOCK_DEBTS[2], ownerId: 'c1' },
   { ...MOCK_DEBTS[3], ownerId: 'c3' },
-];
-
-const MOCK_CLIENTS: Client[] = [
-  { id: 'c1', firstName: 'Jan', lastName: 'Kowalski' },
-  { id: 'c2', firstName: 'Anna', lastName: 'Nowak' },
-  { id: 'c3', firstName: 'Piotr', lastName: 'Wiśniewski' },
 ];
 
 export const debtsMockInterceptor: HttpInterceptorFn = (req, next) => {
@@ -33,13 +29,6 @@ export const debtsMockInterceptor: HttpInterceptorFn = (req, next) => {
   if (debtDetailMatch) {
     const detail = MOCK_DEBT_DETAILS.find((d) => d.id === debtDetailMatch[1]);
     return of(new HttpResponse({ status: detail ? 200 : 404, body: detail ?? null }));
-  }
-
-  if (req.url === '/api/clients') {
-    const idsParam = req.params.get('ids');
-    const ids = idsParam ? idsParam.split(',') : [];
-    const clients = MOCK_CLIENTS.filter((c) => ids.includes(c.id));
-    return of(new HttpResponse({ status: 200, body: clients }));
   }
 
   return next(req);

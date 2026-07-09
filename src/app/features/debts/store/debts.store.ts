@@ -1,24 +1,16 @@
 import { computed, inject } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
-import {
-  patchState,
-  signalStore,
-  withComputed,
-  withMethods,
-  withProps,
-  withState,
-} from '@ngrx/signals';
-import { DebtWithOwner } from './debt.model';
-import { DebtsApi } from './debts-api.service';
+import { signalStore, withComputed, withMethods, withProps } from '@ngrx/signals';
+import { DebtsApi } from '../api/debts-api.service';
+import { DebtDetail } from '../model/debt.model';
 
 export const DebtsStore = signalStore(
   { providedIn: 'root' },
-  withState({ selectedDebtId: null as string | null }),
   withProps(() => {
     const api = inject(DebtsApi);
     return {
-      _resource: rxResource<DebtWithOwner[], void>({
-        stream: () => api.getDebtsWithOwners(),
+      _resource: rxResource<DebtDetail[], void>({
+        stream: () => api.getDebts(),
       }),
     };
   }),
@@ -27,12 +19,13 @@ export const DebtsStore = signalStore(
     isLoading: computed(() => store._resource.isLoading()),
     hasError: computed(() => store._resource.status() === 'error'),
   })),
+  withComputed((store) => ({
+    debtsById: computed(() => new Map(store.debts().map((d) => [d.id, d]))),
+    ownerIds: computed(() => [...new Set(store.debts().map((d) => d.ownerId))]),
+  })),
   withMethods((store) => ({
     reload(): void {
       store._resource.reload();
-    },
-    selectDebt(id: string | null): void {
-      patchState(store, { selectedDebtId: id });
     },
   }))
 );
