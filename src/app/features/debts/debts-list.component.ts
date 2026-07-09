@@ -1,11 +1,12 @@
 import { Component, inject } from '@angular/core';
 import { DatePipe } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { DebtsStore } from './debts.store';
 
 @Component({
   selector: 'app-debts-list',
   standalone: true,
-  imports: [DatePipe],
+  imports: [DatePipe, RouterLink],
   template: `
     <h1>Długi</h1>
 
@@ -32,8 +33,8 @@ import { DebtsStore } from './debts.store';
           </tr>
         </thead>
         <tbody>
-          @for (debt of store.debtsWithOwners(); track debt.id) {
-            <tr>
+          @for (debt of store.debts(); track debt.id) {
+            <tr style="cursor: pointer" [routerLink]="['/debts', debt.id]">
               <td>{{ debt.ownerName }}</td>
               <td>{{ debt.amount }}</td>
               <td>{{ debt.currency }}</td>

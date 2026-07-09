@@ -9,6 +9,13 @@ export const routes: Routes = [
       ),
   },
   {
+    path: 'debts/:id',
+    loadComponent: () =>
+      import('./features/debts/debt-detail.component').then(
+        (m) => m.DebtDetailComponent
+      ),
+  },
+  {
     path: '',
     redirectTo: 'debts',
     pathMatch: 'full',

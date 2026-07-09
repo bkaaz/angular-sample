@@ -36,7 +36,10 @@ export const debtsMockInterceptor: HttpInterceptorFn = (req, next) => {
   }
 
   if (req.url === '/api/clients') {
-    return of(new HttpResponse({ status: 200, body: MOCK_CLIENTS }));
+    const idsParam = req.params.get('ids');
+    const ids = idsParam ? idsParam.split(',') : [];
+    const clients = MOCK_CLIENTS.filter((c) => ids.includes(c.id));
+    return of(new HttpResponse({ status: 200, body: clients }));
   }
 
   return next(req);

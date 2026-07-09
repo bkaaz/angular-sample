@@ -34,11 +34,13 @@ export const DebtsStore = signalStore(
   { providedIn: 'root' },
   withState({ ... }),
   withProps(() => {
-    const http = inject(HttpClient);
+    // inject() here — inside the factory, in the injection context
+    const api = inject(DebtsApi);
     return {
       // _ prefix = private (OmitPrivate<T> strips these from the public API)
       _resource: rxResource<T, void>({
-        stream: () => http.get<T>('/api/...'),  // "stream", not "loader"!
+        // api referenced here — NOT inject() inside stream
+        stream: () => api.getData(),  // "stream", not "loader"!
       }),
     };
   }),
@@ -53,7 +55,31 @@ export const DebtsStore = signalStore(
 );
 ```
 
-**Important:** `rxResource` in Angular 19+ uses `stream:`, not `loader:`.
+**Critical:** `rxResource` in Angular 19+ uses `stream:`, not `loader:`.
+
+**Critical:** Never call `inject()` inside the `stream` function. `stream` runs outside the
+injection context. Angular's rxResource **silently catches** the resulting error — no console
+output, just `status: 'error'` on the resource. Always capture injected values in the
+`withProps` factory (before the `return`) and reference them by closure inside `stream`.
+
+```typescript
+// WRONG — inject() inside stream, silently fails with status: 'error'
+withProps(() => ({
+  _resource: rxResource({ stream: () => inject(SomeService).get() }),
+}))
+
+// CORRECT — explicit return, inject() called in factory
+withProps(() => {
+  const svc = inject(SomeService);
+  return {
+    _resource: rxResource({ stream: () => svc.get() }),
+  };
+})
+```
+
+The compact `() => ({...})` form is dangerous here because it makes the `inject()` appear
+to be "in the factory" while it's actually deferred inside the `stream` arrow. Always use
+the explicit `() => { ... return {...} }` form when `withProps` holds an `rxResource`.
 
 ### Components
 
