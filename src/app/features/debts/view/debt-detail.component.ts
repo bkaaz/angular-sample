@@ -1,7 +1,6 @@
 import { Component, computed, inject, input } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
-import { ClientsStore, injectClientsDemand } from '../../clients/store/clients.store';
 import { DebtsStore } from '../store/debts.store';
 import { toDebtRow } from '../util/debt-row.util';
 
@@ -37,28 +36,20 @@ export class DebtDetailComponent {
   /** Bound to the `:id` route param by `withComponentInputBinding()`. */
   readonly id = input.required<string>();
 
-  private readonly debtsStore = inject(DebtsStore);
-  private readonly clientsStore = inject(ClientsStore);
+  private readonly debts = inject(DebtsStore);
 
   protected readonly debt = computed(() => {
-    const detail = this.debtsStore.debtsById().get(this.id());
-    return detail ? toDebtRow(detail, this.clientsStore.clientsById()) : null;
+    const detail = this.debts.debtsById().get(this.id());
+    return detail ? toDebtRow(detail, this.debts.clientsById()) : null;
   });
 
   // `debt()` is also null while loading, so the template must gate on this before
   // deciding the debt does not exist.
   protected readonly isLoading = computed(
-    () => this.debtsStore.isLoading() || this.clientsStore.isLoading()
+    () => this.debts.isLoading() || this.debts.clientsLoading()
   );
 
   protected readonly hasError = computed(
-    () => this.debtsStore.hasError() || this.clientsStore.hasError()
+    () => this.debts.hasError() || this.debts.clientsError()
   );
-
-  constructor() {
-    injectClientsDemand(() => {
-      const detail = this.debtsStore.debtsById().get(this.id());
-      return detail ? [detail.ownerId] : [];
-    });
-  }
 }

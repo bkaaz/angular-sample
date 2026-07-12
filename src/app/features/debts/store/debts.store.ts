@@ -1,11 +1,18 @@
 import { computed, inject } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
-import { signalStore, withComputed, withMethods, withProps } from '@ngrx/signals';
+import {
+  signalStore,
+  withComputed,
+  withFeature,
+  withMethods,
+  withProps,
+} from '@ngrx/signals';
+import { withClients } from '../../clients/feature/with-clients';
 import { DebtsApi } from '../api/debts-api.service';
 import { DebtDetail } from '../model/debt.model';
 
+/** Provided on the `debts` route, so it dies when the user leaves the feature. */
 export const DebtsStore = signalStore(
-  { providedIn: 'root' },
   withProps(() => {
     const api = inject(DebtsApi);
     return {
@@ -23,6 +30,8 @@ export const DebtsStore = signalStore(
     debtsById: computed(() => new Map(store.debts().map((d) => [d.id, d]))),
     ownerIds: computed(() => [...new Set(store.debts().map((d) => d.ownerId))]),
   })),
+  // withFeature hands the store to the factory, so withClients needs no input constraint.
+  withFeature((store) => withClients(() => store.ownerIds())),
   withMethods((store) => ({
     reload(): void {
       store._resource.reload();

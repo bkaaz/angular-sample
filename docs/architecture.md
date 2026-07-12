@@ -1,4 +1,4 @@
-# Architecture: one store per resource
+# Architecture: fetch per resource, join in the view
 
 This document describes **what to build and why**. For step-by-step rules and code skeletons,
 see [implementation-guide.md](./implementation-guide.md).
@@ -32,52 +32,116 @@ This looks harmless at two resources. It fails predictably:
 - Every new relation adds a `switchMap` level to **every** method.
 - A failing `/api/clients` takes down the debts view.
 
-Moving that join into one big store does not fix it. It relocates it. The store then grows a
-field and a join per relation, and the detail view still drags in the list's concerns.
+**The fix is to join late**, and to split the join in two:
 
-**The fix is to join late.** Fetch each resource independently, compose in the view.
+- **Fetching** is composed in the store, by mixing in a reusable store feature per related
+  resource. Each feature is independent; adding one does not touch the others.
+- **Presentation** is composed in the view, in a `computed`, through a pure function.
 
 ---
 
 ## Core rules
 
-1. **One SignalStore per backend resource.** Not per view, not per feature. `DebtsStore` owns
-   debts. `ClientsStore` owns clients.
-2. **Stores never import each other.** `ClientsStore` must not know that debts exist.
-3. **Composition happens in the view**, in a `computed`.
+1. **One API service per resource.** One method per endpoint. No joins, no cross-resource calls.
+2. **A related resource is pulled in as a `signalStoreFeature`**, parameterised with the ids the
+   host store needs. The feature owns its own `rxResource`.
+3. **Resource features never reach for another resource's store.** They receive ids as an
+   argument.
 4. **The projection is a pure function** — no DI, no state, shared by `import`, not `inject`.
 5. **View models live next to the projection**, never in the transport model file.
 
-Adding a new relation means: one new resource store, one new line in the view's `computed`.
-No existing store changes.
+Adding a new relation means: one new store feature, one `withFeature(...)` line, one more line in
+the view's `computed`. No existing feature changes.
 
 ### What NOT to build
 
-Do **not** create a shared facade, view store, or "debts-with-clients" service — even when two
-views need the same combination. That is where coupling re-accumulates: the facade must know
-both resources, so it grows with every relation, and you are back to the original problem.
+Do **not** create a shared facade service or a root store that knows about several resources. The
+facade must know both sides, so it grows with every relation, and you are back to the original
+problem.
 
-The only thing shared between two resources is a **pure function**. If two views need the same
-projection, export the function. Reconsider a shared abstraction only at a third consumer of
-the *identical* projection, and even then prefer another pure function.
+A store feature is not a facade: it is a self-contained slice that takes ids in and produces
+signals out. `withClients()` knows nothing about debts — it is handed `() => store.ownerIds()`.
+
+---
+
+## How the composition works
+
+`withClients()` is a custom store feature exported by the `clients` library. It creates its own
+`rxResource`, keyed by whatever ids the host supplies:
+
+```typescript
+// clients library — public API
+export function withClients(ids: () => readonly string[]) {
+  return signalStoreFeature(
+    withProps(() => { /* rxResource keyed by ids */ }),
+    withComputed((store) => ({ clientsById, clientsLoading, clientsError })),
+  );
+}
+```
+
+The host store mixes it in with **`withFeature`**, which hands the store to the factory:
+
+```typescript
+export const DebtsStore = signalStore(
+  withProps(/* debts rxResource */),
+  withComputed(/* debts, isLoading, hasError */),
+  withComputed(/* debtsById, ownerIds */),
+  withFeature((store) => withClients(() => store.ownerIds())),
+  withMethods(/* reload */),
+);
+```
+
+`DebtsStore` now exposes `clientsById()` alongside `debts()`. The view does the presentation
+join:
+
+```typescript
+protected readonly rows = computed(() => {
+  const clientsById = this.debts.clientsById();
+  return this.debts.debts().map((debt) => toDebtRow(debt, clientsById));
+});
+```
+
+### Why `withFeature` and not an input constraint
+
+NgRx also lets a feature *demand* something from its host:
+
+```typescript
+// FRAGILE — do not do this
+signalStoreFeature(
+  { props: type<{ clientIds: Signal<string[]> }>() },
+  /* … */
+)
+```
+
+Two problems, one cosmetic and one fatal:
+
+- It forces the host to name a computed `clientIds`, coupling the two by identifier.
+- **It breaks type inference once the host has more than one preceding feature.** With
+  `withProps` + two `withComputed` blocks ahead of it, TypeScript cannot resolve the `signalStore`
+  overload, silently falls back to the default generics, and the whole store degrades to an index
+  signature — every `store.debts()` becomes an error. This was verified against
+  `@ngrx/signals@21.1.1`.
+
+`withFeature` passes the store to the factory instead, so the feature takes ids as an ordinary
+argument. No constraint, no naming coupling, no inference cliff.
 
 ---
 
 ## Layers
 
-Each resource is organised into the same five layers. Directory names are a suggestion; the
-**separation** is not.
+Each resource is organised into the same layers. Directory names are a suggestion; the
+**separation** is not. Note `debts/store/` versus `clients/feature/` — the name says whether the
+resource owns a store of its own or is mixed into someone else's.
 
 | Layer | Contains | Rules |
 |---|---|---|
 | `model` | Transport interfaces only | Exactly what the API returns. No view models. |
 | `api` | One service per resource | One method per endpoint. **No joins, no cross-resource calls.** |
-| `store` | One SignalStore per resource | Owns an `rxResource`. Exposes signals, not observables. |
+| `store` *or* `feature` | The store, or the store feature it contributes | Exposes signals, never observables. |
 | `util` | Pure functions, view models | No DI, no state. Testable without `TestBed`. |
-| `view` | Components | Inject stores, compose with `computed`. |
+| `view` | Components | Inject the store, compose presentation with `computed`. |
 
-The projection function is the only place two resources meet. It takes plain data in and
-returns plain data out:
+The projection function is the only place two resources meet in the view layer:
 
 ```typescript
 // util layer of the *consuming* resource (debts), not of clients
@@ -97,77 +161,80 @@ export function toDebtRow(debt: DebtDetail, clientsById: Map<string, Client>): D
 These are the rules that make the architecture hold. In an Nx repo they stop being a convention
 and become a lint rule — this is the single biggest reason to adopt the split.
 
-**Direction is one-way.** `debts` may depend on `clients`, because `toDebtRow` needs
-`clientFullName`. `clients` must never depend on `debts` or on any other feature.
+**Direction is one-way.** `debts` may depend on `clients`, because it mixes in `withClients()` and
+because `toDebtRow` needs `clientFullName`. `clients` must never depend on `debts` or on any other
+feature.
 
 **Public API of a resource library:**
 
 | Symbol | Exported? | Why |
 |---|---|---|
-| `ClientsStore` | Yes | Consumers read `clientsById()`, `isLoading()`. |
-| `injectClientsDemand` | Yes | The only way to declare which clients a view needs. |
+| `withClients` | Yes | The only way to pull clients into a store. |
 | `Client` (model) | Yes | Needed by the projection function signature. |
 | `clientFullName` (util) | Yes | The projection primitive. |
 | mock interceptor | Yes | The app shell registers it. |
 | **`ClientsApi`** | **No** | Keep internal. |
 
 Keeping `ClientsApi` internal is not cosmetic. If it leaks, the first thing anyone (human or
-model) will do in the debts library is inject it and hand-roll a client fetch — reintroducing
-the API-layer join across two libraries instead of one file.
+model) will do in the debts library is inject it and hand-roll a client fetch — reintroducing the
+API-layer join across two libraries instead of one file.
 
-**Enforce with tags.** Give each library a `scope:<resource>` tag and a `type:<layer>` tag,
-then configure `@nx/enforce-module-boundaries` so that:
+**Enforce with tags.** Give each library a `scope:<resource>` tag and a `type:<layer>` tag, then
+configure `@nx/enforce-module-boundaries` so that:
 
 - `scope:clients` **cannot** depend on `scope:debts` (nor any other feature scope)
 - `type:data-access` **cannot** depend on `type:feature`
 
-Do not prescribe a library count here — match whatever convention the repo already uses. Only
-the two rules above are mandatory.
+Do not prescribe a library count here — match whatever convention the repo already uses. Only the
+two rules above are mandatory.
 
 ---
 
 ## Data lifetime and staleness
 
-The two stores deliberately have **different** caching behaviour. This is the most important
-design decision in the codebase, and it is not an oversight.
+Nothing is cached for the lifetime of the application. `DebtsStore` is declared as a plain
+`signalStore(...)` **without** `providedIn: 'root'`, and listed in `providers` on the parent
+`debts` route:
 
-### `DebtsStore` — cached for the app session
+```typescript
+{
+  path: 'debts',
+  providers: [DebtsStore],
+  children: [
+    { path: '',    loadComponent: /* list */ },
+    { path: ':id', loadComponent: /* detail */ },
+  ],
+}
+```
 
-`providedIn: 'root'` plus a parameterless `rxResource`. A root store is created lazily on first
-`inject()`, and its resource fires exactly once. There is therefore **no `ensureLoaded` for
-debts** — the store existing *is* the guarantee that the request went out.
+One instance is shared by the list and the detail view, and it is destroyed when the user leaves
+the feature. Its debts `rxResource` takes no params and fires exactly once, when the store is
+first injected. There is **no `ensureLoaded`** — the store existing *is* the guarantee that the
+request went out.
 
-- entering the list → first `inject()` → fetch
-- navigating to detail → store already alive → **zero requests**
-- deep-link straight to detail → first `inject()` → fetch
+- entering the list → store created → debts + clients fetched
+- navigating to detail → same instance → **zero requests**
+- deep-link straight to detail → store created → debts + clients fetched
+- leaving `/debts` → store destroyed → next visit re-fetches everything
 
-One path, no branches. Because the API forces the list to fetch every debt detail (see below),
-the cache granularity is "all debts", and the detail view needs nothing of its own.
+**Clients inherit the host store's lifetime.** `withClients()` creates its `rxResource` inside
+`DebtsStore`'s injector, so the clients live and die with the route. This is why the feature must
+never be mixed into a root store: that would cache clients for the whole application session.
 
-### `ClientsStore` — not cached at all
+Because `ownerIds` is derived from every loaded debt, the detail view does not narrow the request
+to a single owner — it reuses the set already fetched for the list. A deep-link to a
+**non-existent** debt therefore still fetches clients; the debts were loaded anyway, so this costs
+one request and keeps the store's shape uniform.
 
-Clients are held **only** for as long as some living view asks for them. Each view registers a
-demand and withdraws it on destroy; the resource parameter is the union of currently live
-demands.
+### Do not add a cache
 
-- data can never be stale, because it does not outlive the view that asked for it
-- request size is bounded by what is on screen, not by session history
-- returning to the list re-fetches. **This is the feature, not the cost.**
+Caching is, by definition, keeping data you know might be stale. Beyond the route scope above,
+do not add any.
 
-Caching is, by definition, keeping data you know might be stale. Until there is a defined
-freshness window for a resource, do not cache it. An accumulating cache (`requestedIds` that
-only ever grows) is tempting and wrong: it is unbounded, it goes stale silently, and fetching
-k ids one at a time transfers O(k²) bytes.
-
-### The asymmetry is a known trade-off
-
-Debts are cached and *can* go stale; clients cannot. This is defensible — the N+1 makes
-re-fetching debts expensive, and clients are cheap and directly user-visible. But it is a
-trade-off, not a law.
-
-If debt staleness matters, the cheapest fix is to provide `DebtsStore` at the route level
-instead of `root`, so it dies when the user leaves the debts area. That bounds staleness to a
-feature session without touching any other rule in this document.
+An accumulating cache (a `requestedIds` array that only ever grows, re-fetching the union) is the
+tempting wrong answer: it is unbounded, it goes stale silently, and fetching k ids one at a time
+transfers O(k²) bytes. Likewise, no `shareReplay` on a resource fetch and no `providedIn: 'root'`
+on a resource store.
 
 ---
 
@@ -199,5 +266,5 @@ what to delete once the backend changes.
 2. **A deep-link to one debt fetches all debts**, a direct consequence of (1). Optimising this
    would require a second source of truth in the detail view (map ?? own resource). Not worth it
    while N is small.
-3. **`GET /api/clients` has no parameterless variant.** This happens to suit the no-cache design:
-   we fetch exactly what is currently asked for.
+3. **`GET /api/clients` has no parameterless variant.** Clients are always requested by an
+   explicit, sorted id list.

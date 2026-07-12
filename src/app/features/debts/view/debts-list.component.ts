@@ -1,7 +1,6 @@
 import { Component, computed, inject } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
-import { ClientsStore, injectClientsDemand } from '../../clients/store/clients.store';
 import { DebtsStore } from '../store/debts.store';
 import { toDebtRow } from '../util/debt-row.util';
 
@@ -51,28 +50,23 @@ import { toDebtRow } from '../util/debt-row.util';
   `,
 })
 export class DebtsListComponent {
-  private readonly debtsStore = inject(DebtsStore);
-  private readonly clientsStore = inject(ClientsStore);
+  private readonly debts = inject(DebtsStore);
 
   protected readonly rows = computed(() => {
-    const clientsById = this.clientsStore.clientsById();
-    return this.debtsStore.debts().map((debt) => toDebtRow(debt, clientsById));
+    const clientsById = this.debts.clientsById();
+    return this.debts.debts().map((debt) => toDebtRow(debt, clientsById));
   });
 
   // Both flags, or the table flashes rows whose ownerName is still the `—` placeholder.
   protected readonly isLoading = computed(
-    () => this.debtsStore.isLoading() || this.clientsStore.isLoading()
+    () => this.debts.isLoading() || this.debts.clientsLoading()
   );
 
   protected readonly hasError = computed(
-    () => this.debtsStore.hasError() || this.clientsStore.hasError()
+    () => this.debts.hasError() || this.debts.clientsError()
   );
 
-  constructor() {
-    injectClientsDemand(() => this.debtsStore.ownerIds());
-  }
-
   protected reload(): void {
-    this.debtsStore.reload();
+    this.debts.reload();
   }
 }
